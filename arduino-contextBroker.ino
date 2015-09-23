@@ -19,6 +19,11 @@
 //LSD display
 #include <LiquidCrystal.h>
 
+//==============================================================================================  
+//
+//  MACROS
+//
+//==============================================================================================  
 //Messages 
 #define msgInit "Initializing.."
 #define msgSend "Sending.."
@@ -26,12 +31,27 @@
 #define msgReady "Ready"
 
 //SENSOR ID
-#define sid       10606353;
+#define sid       10606353
 
 //ContextBroker
 #define url             "95.111.115.171"  
 #define PORT            1026 
 
+
+#define MAX_ATTR_COUNT  7
+
+//5 Seconds wait before refresh
+#define LCD_WAIT_TIME_REFRESH 5
+
+//RFID Reader
+#define RST_PIN    9   //change defaults for RFID 
+#define SS_PIN    8  //change defaults for RFID
+
+//==============================================================================================  
+//
+//  Global Variables
+//
+//==============================================================================================  
 //TIME
 RTC_DS1307 RTC;
 
@@ -40,9 +60,7 @@ int sensorPin = 0;
 // use TSL2561_ADDR_LOW (0x29) or TSL2561_ADDR_HIGH (0x49) respectively
 TSL2561 tsl(TSL2561_ADDR_FLOAT);
 
-//RFID Reader
-#define RST_PIN    9   //change defaults for RFID 
-#define SS_PIN    8  //change defaults for RFID
+
 MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance
 
 // initialize the library with the numbers of the interface pins
@@ -54,7 +72,133 @@ byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
 //Client
 EthernetClient client;
 
+unsigned long nLCDLastTimeRefresh= 0;
+//==============================================================================================  
+//
+// Namespaces
+//
+//==============================================================================================  
 
+namespace CHTTPRequest
+{
+  typedef struct _AttrData
+  {
+      String sAttrName;
+      String sAttrType;
+      String sAttrValue;
+  } CAttrData ;
+  
+  
+//----------------------------------------------------------------------------------------------    
+//
+//
+//----------------------------------------------------------------------------------------------  
+int sendContext(const char * szTypeID
+                  , unsigned long nElementID
+                  ,  CAttrData   arrAttributes[]
+                  ,  int nArrElemCount
+                  , unsigned long timestamp )
+  {
+       if (nArrElemCount > MAX_ATTR_COUNT)
+       {
+          // Serial.println("Too many elements in 'arrAttributes' array.");
+          // Serial.println("If you want to pass more elements then increase count of arrCBStrings.");
+          
+          return -1; // fail
+       }
+       else
+       {
+          lcd.setCursor(0, 1);
+          lcd.print(nElementID);
+          if (client.connect(url, PORT)) 
+          {
+            long conLength = 0;
+            
+            String arrCBStrings[MAX_ATTR_COUNT + 3];
+            int nStrIndex = 0;
+            
+            arrCBStrings[nStrIndex] = "{\"contextElements\":[{\"type\":\"";
+            arrCBStrings[nStrIndex]+=  szTypeID;
+            arrCBStrings[nStrIndex]+=  "\",\"isPattern\":\"false\",\"id\":\"";
+            arrCBStrings[nStrIndex]+=  nElementID;
+            
+            nStrIndex++;
+            
+            arrCBStrings[nStrIndex]= "\",\"attributes\":[{\"name\":\"ts\",\"type\":\"string\",\"value\":\"";
+            arrCBStrings[nStrIndex] += timestamp;
+   
+            nStrIndex++;
+    
+            for (int nCurrAttrIndex = 0; nCurrAttrIndex < nArrElemCount; nCurrAttrIndex++)
+            {
+              arrCBStrings[nStrIndex]= "\"},{\"name\":\"";
+              arrCBStrings[nStrIndex]+= arrAttributes[nCurrAttrIndex].sAttrName;
+              arrCBStrings[nStrIndex]+= "\",\"type\":\"";
+              arrCBStrings[nStrIndex]+= arrAttributes[nCurrAttrIndex].sAttrType;
+              arrCBStrings[nStrIndex]+= "\",\"value\":\"";
+              arrCBStrings[nStrIndex]+= arrAttributes[nCurrAttrIndex].sAttrValue;
+    
+              nStrIndex++;  
+            }
+            
+            nStrIndex++;
+            arrCBStrings[nStrIndex] = "\"}]}],\"updateAction\":\"APPEND\"}";
+            
+            //Check Context Length: 
+            
+            for (int nCurrLenIndex = 0; nCurrLenIndex <= nStrIndex; nCurrLenIndex++)
+            {
+            //  Serial.println(arrCBStrings[nCurrLenIndex]);
+              conLength+= arrCBStrings[nCurrLenIndex].length();
+            }
+
+            Serial.println("connected");
+            Serial.println(conLength);
+            
+            // Make a HTTP request:
+            client.println("POST  /ngsi10/updateContext");
+            //client.println("Connection: keep-alive");
+            client.println("Accept: application/json");
+            client.println("Content-Type: application/json");
+            //client.println("Content-Type:   text/plain; charset=UTF-8");
+            //client.print("X-Auth-Token: "); 
+            //client.println("VMfS1db5lyV3mtJ7YSqAqPFHR9cu9m");
+          
+            //client.println("Connection: close");
+            client.print("Content-Length: ");
+            client.println(conLength);
+            client.println(); 
+            for (int nCurrStrIndex = 0; nCurrStrIndex <= nStrIndex; nCurrStrIndex++)
+            {
+              client.print(arrCBStrings[nCurrStrIndex]);
+            }
+            client.println();
+            //client.println("Connection: close");
+            //Serial.println(data);
+            client.stop();
+            //delay (1000);
+            return 0;
+         }
+         else 
+         {
+          // if you didn't get a connection to the server:
+             Serial.println(msgErr);
+                  lcd.setCursor(10, 0);
+                  lcd.print(msgErr);
+         }  
+     }
+  }
+//----------------------------------------------------------------------------------------------    
+//
+//
+//----------------------------------------------------------------------------------------------    
+};
+
+//==============================================================================================  
+//
+// Functions
+//
+//==============================================================================================    
 void setup(){
     //Init serial bus
     Serial.begin(9600);
@@ -103,33 +247,34 @@ void setup(){
     
     delay(2000); 
 }
-
-void loop() {
-
-  lcd.clear();
-  DateTime now = RTC.now();
+//----------------------------------------------------------------------------------------------  
+//
+//
+//----------------------------------------------------------------------------------------------  
+void UpdateLCD(const DateTime & currTimeDate)
+{
     Serial.print("Timestamp= ");
-    Serial.println(now.unixtime());
-    Serial.print(now.year());
+    Serial.println(currTimeDate.unixtime());
+    Serial.print(currTimeDate.year());
     Serial.print('/');
-    Serial.print(now.month());
+    Serial.print(currTimeDate.month());
     Serial.print('/');
-    Serial.print(now.day());
+    Serial.print(currTimeDate.day());
     Serial.print(' ');
-    Serial.print(now.hour());
+    Serial.print(currTimeDate.hour());
     Serial.print(':');
-    Serial.print(now.minute());
+    Serial.print(currTimeDate.minute());
     Serial.print(':');
-    Serial.println(now.second());
+    Serial.println(currTimeDate.second());
     
     lcd.setCursor(0, 1);
-    lcd.print(now.hour());
+    lcd.print(currTimeDate.hour());
     lcd.print(":");
-    lcd.print(now.minute());
+    lcd.print(currTimeDate.minute());
     lcd.print(":");
-     lcd.print(now.second());
+     lcd.print(currTimeDate.second());
+      //temperature
   
-  //temperature
   int reading = analogRead(sensorPin);  
   float voltage = reading * 5.0;
   voltage /= 1024.0; 
@@ -160,8 +305,51 @@ void loop() {
     lcd.print("L=");
     //lcd.setCursor(11, 0);
     lcd.print(full - ir);
+}
 
-  delay(1000);
+//----------------------------------------------------------------------------------------------  
+//
+//
+//----------------------------------------------------------------------------------------------  
+void loop() 
+{
+
+  lcd.clear();
+  DateTime now = RTC.now();
+
+  if ((0 == nLCDLastTimeRefresh)
+     || (nLCDLastTimeRefresh + LCD_WAIT_TIME_REFRESH < now.unixtime())
+     )
+  {
+    UpdateLCD(now);
+   /* Serial.print("Timestamp= ");
+    Serial.println(now.unixtime());
+    Serial.print(now.year());
+    Serial.print('/');
+    Serial.print(now.month());
+    Serial.print('/');
+    Serial.print(now.day());
+    Serial.print(' ');
+    Serial.print(now.hour());
+    Serial.print(':');
+    Serial.print(now.minute());
+    Serial.print(':');
+    Serial.println(now.second());
+    
+    lcd.setCursor(0, 1);
+    lcd.print(now.hour());
+    lcd.print(":");
+    lcd.print(now.minute());
+    lcd.print(":");
+     lcd.print(now.second());*/
+     
+ 
+ 
+    
+    nLCDLastTimeRefresh = now.unixtime();
+     
+  }
+  //delay(1000);
         
         //RFID card operation     
         int progress;
@@ -183,8 +371,41 @@ void loop() {
         Serial.println(freeMemory());
         
         //Genereting Card serial niumber
-               
-        progress = sendContext(dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size) , now.unixtime());   
+
+        CHTTPRequest::CAttrData  attrItem[2];       
+
+        attrItem[0].sAttrName = "sid";
+        attrItem[0].sAttrType = "string";
+        attrItem[0].sAttrValue+= sid;
+
+        attrItem[1].sAttrName = "kg";
+        attrItem[1].sAttrType = "integer";
+        attrItem[1].sAttrValue+= 1300;
+        
+        progress = CHTTPRequest::sendContext("b"
+                                ,dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size)
+                                ,attrItem
+                                ,2
+                                , now.unixtime());   
+        char szTemperature[6];
+   /* 4 is mininum width, 2 is precision; float value is copied onto str_temp*/
+         dtostrf(26.6, 4, 2, szTemperature);
+     
+        attrItem[0].sAttrName = "T";
+        attrItem[0].sAttrType = "float";
+        attrItem[0].sAttrValue = "";
+        attrItem[0].sAttrValue += szTemperature;
+
+        attrItem[1].sAttrName = "H";
+        attrItem[1].sAttrType = "integer";
+        attrItem[1].sAttrValue = "";
+        attrItem[1].sAttrValue+= 78;
+        
+        progress = CHTTPRequest::sendContext("s"
+                                          , (unsigned long)sid
+                                          ,attrItem
+                                          ,2
+                                          , now.unixtime());                                   
         //Serial.println(progress);
         
         
@@ -205,9 +426,12 @@ void loop() {
         }
            
   
-  delay(3000);
+  //delay(3000);
 }
-
+//----------------------------------------------------------------------------------------------    
+//
+//
+//----------------------------------------------------------------------------------------------  
 long dump_byte_array(byte *buffer, byte bufferSize) {
    
     String sID;
@@ -230,77 +454,11 @@ long dump_byte_array(byte *buffer, byte bufferSize) {
           Serial.println("Error! source buffer is larger than 4 bytes!");
         }
 }
+//----------------------------------------------------------------------------------------------    
+//
+//
+//----------------------------------------------------------------------------------------------  
 
 
-
-int sendContext( unsigned long tag, unsigned long timestamp ){
-        lcd.setCursor(0, 1);
-        lcd.print(tag);
-if (client.connect(url, PORT)) {
-      long conLength;
-       String data;
-       String data1;
-       String data2;
-        String data9;
-      String kg="1.3";
-      
-      data = "{\"contextElements\":[{\"type\":\"b\",\"isPattern\":\"false\",\"id\":\"";
-      //Serial.println(data);
-      data = data + tag;
-      //Serial.println(data);
-      data= data + "\",\"attributes\":[{\"name\":\"ts\",\"type\":\"string\",\"value\":\"";
-      data = data + timestamp;
-     // Serial.print(data);
-     
-      data1 = "\"},{\"name\":\"sid\",\"type\":\"string\",\"value\":\"";
-       data1 = data1 + sid;
-        
-        data2 = "\"},{\"name\":\"kg\",\"type\":\"float\",\"value\":\"";
-       data2 = data2 + kg;
-
-      //Serial.println(data1);
-      data9 = "\"}]}],\"updateAction\":\"APPEND\"}";
-      
-      //Check Context Length: 
-      conLength = data.length();
-      conLength = conLength +  data1.length();
-      conLength =  conLength+  data2.length();
-      conLength =  conLength+  data9.length();
-     // Serial.println(data2);
-      Serial.println("connected");
-      
-      
-      Serial.println(conLength);
-      // Make a HTTP request:
-      client.println("POST  /ngsi10/updateContext");
-      //client.println("Connection: keep-alive");
-      client.println("Accept: application/json");
-      client.println("Content-Type: application/json");
-      //client.println("Content-Type:   text/plain; charset=UTF-8");
-      //client.print("X-Auth-Token: "); 
-      //client.println("VMfS1db5lyV3mtJ7YSqAqPFHR9cu9m");
-    
-      //client.println("Connection: close");
-      client.print("Content-Length: ");
-      client.println(conLength);
-      client.println(); 
-      client.print(data);
-      client.print(data1);
-      client.print(data2);
-      client.print(data9);
-      client.println();
-      //client.println("Connection: close");
-      //Serial.println(data);
-      client.stop();
-      //delay (1000);
-      return 0;
-   }
-    else {
-    // if you didn't get a connection to the server:
-       Serial.println(msgErr);
-            lcd.setCursor(10, 0);
-            lcd.print(msgErr);
-   }  
-}
 
  
