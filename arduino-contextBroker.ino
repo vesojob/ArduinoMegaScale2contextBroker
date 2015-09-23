@@ -251,7 +251,7 @@ void setup(){
 //
 //
 //----------------------------------------------------------------------------------------------  
-void UpdateLCD(const DateTime & currTimeDate)
+void UpdateLCD(const DateTime & currTimeDate,  float temperatureC)
 {
     Serial.print("Timestamp= ");
     Serial.println(currTimeDate.unixtime());
@@ -275,11 +275,11 @@ void UpdateLCD(const DateTime & currTimeDate)
      lcd.print(currTimeDate.second());
       //temperature
   
-  int reading = analogRead(sensorPin);  
+ /* int reading = analogRead(sensorPin);  
   float voltage = reading * 5.0;
   voltage /= 1024.0; 
   Serial.print(voltage); Serial.println(" volts");
-  float temperatureC = (voltage - 0.5) * 100 ;  
+  float temperatureC = (voltage - 0.5) * 100 ;  */
   Serial.print(temperatureC); Serial.println(" degrees C");
    
    char str_temp[6];
@@ -305,6 +305,9 @@ void UpdateLCD(const DateTime & currTimeDate)
     lcd.print("L=");
     //lcd.setCursor(11, 0);
     lcd.print(full - ir);
+
+
+
 }
 
 //----------------------------------------------------------------------------------------------  
@@ -316,38 +319,23 @@ void loop()
 
   lcd.clear();
   DateTime now = RTC.now();
+  
+ 
 
   if ((0 == nLCDLastTimeRefresh)
      || (nLCDLastTimeRefresh + LCD_WAIT_TIME_REFRESH < now.unixtime())
      )
   {
-    UpdateLCD(now);
-   /* Serial.print("Timestamp= ");
-    Serial.println(now.unixtime());
-    Serial.print(now.year());
-    Serial.print('/');
-    Serial.print(now.month());
-    Serial.print('/');
-    Serial.print(now.day());
-    Serial.print(' ');
-    Serial.print(now.hour());
-    Serial.print(':');
-    Serial.print(now.minute());
-    Serial.print(':');
-    Serial.println(now.second());
+
+    int reading = analogRead(sensorPin);  
+    float voltage = reading * 5.0;
+    voltage /= 1024.0; 
+    Serial.print(voltage); Serial.println(" volts");
+    float temperatureC = (voltage - 0.5) * 100 ;  
     
-    lcd.setCursor(0, 1);
-    lcd.print(now.hour());
-    lcd.print(":");
-    lcd.print(now.minute());
-    lcd.print(":");
-     lcd.print(now.second());*/
-     
- 
- 
+    UpdateLCD(now, temperatureC);
     
     nLCDLastTimeRefresh = now.unixtime();
-     
   }
   //delay(1000);
         
@@ -387,24 +375,36 @@ void loop()
                                 ,attrItem
                                 ,2
                                 , now.unixtime());   
+
+        CHTTPRequest::CAttrData  attrSensorItems[4];  
         char szTemperature[6];
    /* 4 is mininum width, 2 is precision; float value is copied onto str_temp*/
          dtostrf(26.6, 4, 2, szTemperature);
      
-        attrItem[0].sAttrName = "T";
-        attrItem[0].sAttrType = "float";
-        attrItem[0].sAttrValue = "";
-        attrItem[0].sAttrValue += szTemperature;
+        attrSensorItems[0].sAttrName = "T";
+        attrSensorItems[0].sAttrType = "float";
+        attrSensorItems[0].sAttrValue = "";
+        attrSensorItems[0].sAttrValue += szTemperature;
 
-        attrItem[1].sAttrName = "H";
-        attrItem[1].sAttrType = "integer";
-        attrItem[1].sAttrValue = "";
-        attrItem[1].sAttrValue+= 78;
+        attrSensorItems[1].sAttrName = "H";
+        attrSensorItems[1].sAttrType = "integer";
+        attrSensorItems[1].sAttrValue = "";
+        attrSensorItems[1].sAttrValue+= 78;
+
+        attrSensorItems[2].sAttrName = "M";
+        attrSensorItems[2].sAttrType = "integer";
+        attrSensorItems[2].sAttrValue = "";
+        attrSensorItems[2].sAttrValue+= 78;
+
+        attrSensorItems[3].sAttrName = "F";
+        attrSensorItems[3].sAttrType = "integer";
+        attrSensorItems[3].sAttrValue = "";
+        attrSensorItems[3].sAttrValue+= 78;
         
         progress = CHTTPRequest::sendContext("s"
                                           , (unsigned long)sid
-                                          ,attrItem
-                                          ,2
+                                          ,attrSensorItems
+                                          ,4
                                           , now.unixtime());                                   
         //Serial.println(progress);
         
@@ -425,8 +425,7 @@ void loop()
             
         }
            
-  
-  //delay(3000);
+  delay(3000);
 }
 //----------------------------------------------------------------------------------------------    
 //
